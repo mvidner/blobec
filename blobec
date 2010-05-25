@@ -2,12 +2,16 @@
 
 require "pp"
 #require "uri"
-#require "rubygems"
+require "rubygems"
+require "rake"
 #require "net/ftp-netrc"
 
 command = ARGV[0]
 filename = ARGV[1]
-url = File.new(filename + ".blburl").readline.chomp
+
+def url_for(filename)
+  File.new(filename + ".blburl").readline.chomp
+end
 
 #url_s = ARGV[0]
 #url = URI.parse url_s
@@ -25,22 +29,25 @@ def ruby_upload(url, filename)
 end
 
 def sys(array)
-  system *array
+  sh *array
+end
+
+def curl(array)
+  # insecure sucks. should --cacert help?
+  sys %w{curl --verbose --netrc-optional --ftp-ssl --insecure} + array
 end
 
 def upload(url, filename)
-  sys %w{curl -v -n -T} + [filename, url.to_s]
+  curl ["--upload-file", filename, url.to_s]
 end
 
 def download(url, filename)
-  sys %w{curl -v -n --remote-time -o} + [filename, url.to_s]
+  curl %w{--remote-time --output} + [filename, url.to_s]
 end
 
 def timestamp(url, filename)
-  sys %w{curl -v -n --remote-time --range 0-0 -o} + [filename, url.to_s]
+  curl %w{--remote-time --range 0-0 --output} + [filename, url.to_s]
 end
-
-#upload(url, filename)
 
 def mtime(filename)
   File.new(filename).mtime
@@ -74,10 +81,25 @@ def update(url, filename)
   merge theirs_fn, mine_fn, filename
 end
 
+def push(filename)
+  local = "file://" + File.expand_path(filename)
+  git = filename + ".git"
+  sys %w{git clone --bare} + [local, git]
+  tar = git + ".tar"
+  sys %w{tar cvf} + [tar, git]
+  gtg = filename + ".gtg"
+  sys %w{gpg --encrypt --default-recipient-self --output} + [gtg, tar]
+  upload url_for(gtg), gtg
+end
+
 case command
 when "up", "update":
     update(url, filename)
 when "ci", "checkin":
 when "st", "status":
     system "ls -l #{filename}*"
+when "upload":
+    upload(url, filename)
+when "push":
+    push filename
 end
