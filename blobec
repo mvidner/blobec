@@ -41,6 +41,15 @@ def upload(url, filename)
   curl ["--upload-file", filename, url.to_s]
 end
 
+def upload_ts(url, filename)
+  upload url, filename
+  tfn = filename + ".timestamp"
+  timestamp(url, tfn)
+  theirs_ts = mtime(tfn)
+  File.utime(0, theirs_ts, filename)
+  rm tfn
+end
+
 def download(url, filename)
   curl %w{--remote-time --output} + [filename, url.to_s]
 end
@@ -65,7 +74,8 @@ def merge(theirs, mine, result)
   end
 end
 
-def update(url, filename)
+def update(filename)
+  url = url_for(filename)
   tfn = filename + ".timestamp"
   timestamp(url, tfn)
   mine_ts = mtime(filename)
@@ -81,7 +91,7 @@ def update(url, filename)
   merge theirs_fn, mine_fn, filename
 end
 
-def push(filename)
+def pack(filename)
   local = "file://" + File.expand_path(filename)
   git = filename + ".git"
   sys %w{git clone --bare} + [local, git]
@@ -89,12 +99,31 @@ def push(filename)
   sys %w{tar cvf} + [tar, git]
   gtg = filename + ".gtg"
   sys %w{gpg --encrypt --default-recipient-self --output} + [gtg, tar]
-  upload url_for(gtg), gtg
+end
+
+def push(filename)
+  pack filename
+  gtg = filename + ".gtg"
+  upload_ts url_for(gtg), gtg
+end
+
+def unpack(filename)
+  git = filename + ".git"
+  tar = git + ".tar"
+  gtg = filename + ".gtg"
+  sys %w{gpg --decrypt --output} + [tar, gtg]
+  # dumb
+  sys %w{tar xvf} + [tar]
+end
+
+def fetch(filename)
+  update(filename + ".gtg")
+  unpack filename
 end
 
 case command
 when "up", "update":
-    update(url, filename)
+    update(filename)
 when "ci", "checkin":
 when "st", "status":
     system "ls -l #{filename}*"
@@ -102,4 +131,6 @@ when "upload":
     upload(url, filename)
 when "push":
     push filename
+when "fetch":
+    fetch filename
 end
