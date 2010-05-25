@@ -105,6 +105,8 @@ def push(filename)
   pack filename
   gtg = filename + ".gtg"
   upload_ts url_for(gtg), gtg
+  rm tar
+  rm_r git
 end
 
 def unpack(filename)
