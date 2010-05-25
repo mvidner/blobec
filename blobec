@@ -1,0 +1,83 @@
+#! /usr/bin/env ruby
+
+require "pp"
+#require "uri"
+#require "rubygems"
+#require "net/ftp-netrc"
+
+command = ARGV[0]
+filename = ARGV[1]
+url = File.new(filename + ".blburl").readline.chomp
+
+#url_s = ARGV[0]
+#url = URI.parse url_s
+#filename = ARGV[1] || url.path[%r{.*/(.*)},1]
+
+def ruby_upload(url, filename)
+  ftp = Net::FTP.new url.host
+  ftp.debug_mode = true
+  ftp.passive = true
+  ftp.login(nil) # netrc
+  dir, slash, base = url.path.rpartition "/"
+  ftp.chdir dir
+  ftp.putbinaryfile(filename, base)
+  ftp.close
+end
+
+def sys(array)
+  system *array
+end
+
+def upload(url, filename)
+  sys %w{curl -v -n -T} + [filename, url.to_s]
+end
+
+def download(url, filename)
+  sys %w{curl -v -n --remote-time -o} + [filename, url.to_s]
+end
+
+def timestamp(url, filename)
+  sys %w{curl -v -n --remote-time --range 0-0 -o} + [filename, url.to_s]
+end
+
+#upload(url, filename)
+
+def mtime(filename)
+  File.new(filename).mtime
+end
+
+require "fileutils"
+include FileUtils
+
+def merge(theirs, mine, result)
+  puts "MERGE", theirs, mine, result
+  if identical? theirs, mine
+    mv theirs, result
+    rm mine
+    puts "SAME CONTENT"
+  end
+end
+
+def update(url, filename)
+  tfn = filename + ".timestamp"
+  timestamp(url, tfn)
+  mine_ts = mtime(filename)
+  theirs_ts = mtime(tfn)
+  if theirs_ts == mine_ts
+    puts "SAME TIMESTAMP"
+    return
+  end
+  theirs_fn = filename + ".theirs"
+  download(url, theirs_fn)
+  mine_fn = filename + ".mine"
+  mv filename, mine_fn
+  merge theirs_fn, mine_fn, filename
+end
+
+case command
+when "up", "update":
+    update(url, filename)
+when "ci", "checkin":
+when "st", "status":
+    system "ls -l #{filename}*"
+end
