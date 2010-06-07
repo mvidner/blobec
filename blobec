@@ -5,28 +5,71 @@ require "pp"
 require "rubygems"
 require "rake"
 #require "net/ftp-netrc"
+require "fileutils"
 
-command = ARGV[0]
-filename = ARGV[1]
+require 'optparse'
+
+$remote = "origin"
+
+opts = OptionParser.new
+opts.on("-r", "--remote NAME", String) {|n| $remote = n }
+command, filename = opts.parse(*ARGV)
 
 def url_for(filename)
-  File.new(filename + ".blburl").readline.chomp
+  File.new(filename + ".blburl." + $remote).readline.chomp
 end
+
 
 #url_s = ARGV[0]
 #url = URI.parse url_s
 #filename = ARGV[1] || url.path[%r{.*/(.*)},1]
 
-def ruby_upload(url, filename)
-  ftp = Net::FTP.new url.host
-  ftp.debug_mode = true
-  ftp.passive = true
-  ftp.login(nil) # netrc
-  dir, slash, base = url.path.rpartition "/"
-  ftp.chdir dir
-  ftp.putbinaryfile(filename, base)
-  ftp.close
+module Blobec
+  class Transport
+    attr_accessor :filename, :url
+
+    def initialize(filename, url)
+      self.filename = filename
+      self.url = url
+    end
+
+    def locked_url
+      url + ".locked"
+    end
+
+    def update
+      lock
+      get
+      yield
+      put
+      unlock
+    end
+  end
+
+  class Ftp < Transport
+  end
+
+  class File < Transport
+    def remote_filename(u = url)
+      u.sub %r{^file://}, ""
+    end
+
+    def get
+      FileUtils.cp remote_filename, filename
+    end
+
+    def put
+#      FileUtils.cp filename, ...
+    end
+
+    # TODO ensure that create will not kill an existing blob
+    def create
+      FileUtils.touch remote_filename
+    end
+  end
 end
+
+
 
 def sys(array)
   sh *array
@@ -123,6 +166,11 @@ def fetch(filename)
   unpack filename
 end
 
+url = url_for filename
+# -> factory method in Blobec
+klass = Blobec.const_get(url.sub(/:.*/, "").capitalize)
+transfer = klass.new(filename, url)
+
 case command
 when "up", "update":
     update(filename)
@@ -135,4 +183,6 @@ when "push":
     push filename
 when "fetch":
     fetch filename
+when "create":
+    transfer.create
 end
