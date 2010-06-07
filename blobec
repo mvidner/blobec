@@ -118,6 +118,32 @@ module Blobec
     end # module File
   end # module Transport
 
+  module Wrap
+    extend self
+
+    def wrap(git_dir, pack_filename)
+      local = "file://" + File.expand_path(git_dir)
+      mktemp("-d #{git_dir}.XXXXXX.bare.git") do |git|
+        sys %w{git clone --bare} + [local, git]
+        mktemp(git_dir + ".XXXXXX.tar") do |tar|
+          sys %w{tar cvf} + [tar, "-C", git, "."]
+          sys %w{gpg --encrypt --default-recipient-self --output} + [pack_filename, tar]
+        end
+      end
+    end  
+
+    def unwrap(pack_filename)
+      git = nil
+      mktemp(pack_filename + ".XXXXXX.tar") do |tar|
+        # interactive
+        sys %w{gpg --decrypt --output} + [tar, pack_filename]
+        git = mktemp("-d #{git_dir}.XXXXXX.bare.git")
+        sys %w{tar -f} + [tar, "-C", git, "-xv"]
+      end
+      git
+    end
+  end
+
   module Vcs
     module Git
       extend self
@@ -125,6 +151,28 @@ module Blobec
       # compare two blobs
       # newer, equal, DIVERGED=nil
       def compare(a, b)
+        atob = dry_push a, b
+        btoa = dry_push b, a
+        both = atob + btoa
+        if both < -1 or both > 1
+          nil
+        else
+          both
+        end
+      end
+
+      def dry_push(dir_a, dir_b)
+        out = `cd #{dir_a}; git push --dry-run --verbose --porcelain #{dir_b}`
+        if $?.success # a >= b
+          results = out.grep /^[ =!]/ # space:success, =:unchanged, !:failed
+          if results.all? {|r| r =~ /^=/ }
+            0                   # equal
+          else
+            1                   # at least 1 fast forward: a > b
+          end
+        else
+          -1                    # push failed: a < b or something else
+        end
       end
     end
   end
@@ -159,31 +207,21 @@ def update(filename)
   merge theirs_fn, mine_fn, filename
 end
 
-def pack(filename)
-  local = "file://" + File.expand_path(filename)
-  git = filename + ".git"
-  sys %w{git clone --bare} + [local, git]
-  tar = git + ".tar"
-  sys %w{tar cvf} + [tar, git]
-  gtg = filename + ".gtg"
-  sys %w{gpg --encrypt --default-recipient-self --output} + [gtg, tar]
+def mktemp(template)
+  t = `mktemp #{template}`
+  fail unless $?.success?
+  if block_given?
+    yield t
+    rm_r t
+  else
+    t
+  end
 end
 
 def push(filename)
   pack filename
   gtg = filename + ".gtg"
   upload_ts url_for(gtg), gtg
-  rm tar
-  rm_r git
-end
-
-def unpack(filename)
-  git = filename + ".git"
-  tar = git + ".tar"
-  gtg = filename + ".gtg"
-  sys %w{gpg --decrypt --output} + [tar, gtg]
-  # dumb
-  sys %w{tar xvf} + [tar]
 end
 
 def fetch(filename)
