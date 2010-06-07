@@ -4,7 +4,6 @@ require "pp"
 #require "uri"
 require "rubygems"
 require "rake"
-#require "net/ftp-netrc"
 require "fileutils"
 
 require 'optparse'
@@ -24,8 +23,12 @@ end
 #url = URI.parse url_s
 #filename = ARGV[1] || url.path[%r{.*/(.*)},1]
 
+def sys(array)
+  sh *array
+end
+
 module Blobec
-  class Transport
+  class XTransport
     attr_accessor :filename, :url
 
     def initialize(filename, url)
@@ -46,63 +49,85 @@ module Blobec
     end
   end
 
-  class Ftp < Transport
+  module Transport
+    module Ftp
+      extend self
+
+      # url -> filename
+      def get(filename, url)
+        curl %w{--remote-time --output} + [filename, url.to_s]
+      end
+
+      # filename -> url
+      def put(filename, url)
+        curl ["--upload-file", filename, url.to_s]
+      end
+
+      module_function :get, :put
+
+      private
+
+      def curl(array)
+        # insecure sucks. should --cacert help?
+        sys %w{curl --verbose --netrc-optional --ftp-ssl --insecure} + array
+      end
+
+      # these are obsolete?
+      def upload_ts(url, filename)
+        upload url, filename
+        tfn = filename + ".timestamp"
+        timestamp(url, tfn)
+        theirs_ts = mtime(tfn)
+        File.utime(0, theirs_ts, filename)
+        rm tfn
+      end
+
+      def timestamp(url, filename)
+        curl %w{--remote-time --range 0-0 --output} + [filename, url.to_s]
+      end
+
+      def mtime(filename)
+        File.new(filename).mtime
+      end
+    end # module Ftp
+
+    module File
+      extend self
+
+      # url -> filename
+      def get(filename, url)
+        FileUtils.cp remote_filename(url), filename
+      end
+
+      # filename -> url
+      def put(filename, url)
+        p self
+        FileUtils.cp filename, remote_filename(url)
+      end
+
+      # TODO ensure that create will not kill an existing blob
+      def create
+        FileUtils.touch remote_filename
+      end
+
+      private
+
+      def remote_filename(url)
+        url.sub %r{^file://}, ""
+      end
+    end # module File
+  end # module Transport
+
+  module Vcs
+    module Git
+      extend self
+
+      # compare two blobs
+      # newer, equal, DIVERGED=nil
+      def compare(a, b)
+      end
+    end
   end
-
-  class File < Transport
-    def remote_filename(u = url)
-      u.sub %r{^file://}, ""
-    end
-
-    def get
-      FileUtils.cp remote_filename, filename
-    end
-
-    def put
-#      FileUtils.cp filename, ...
-    end
-
-    # TODO ensure that create will not kill an existing blob
-    def create
-      FileUtils.touch remote_filename
-    end
-  end
-end
-
-
-
-def sys(array)
-  sh *array
-end
-
-def curl(array)
-  # insecure sucks. should --cacert help?
-  sys %w{curl --verbose --netrc-optional --ftp-ssl --insecure} + array
-end
-
-def upload(url, filename)
-  curl ["--upload-file", filename, url.to_s]
-end
-
-def upload_ts(url, filename)
-  upload url, filename
-  tfn = filename + ".timestamp"
-  timestamp(url, tfn)
-  theirs_ts = mtime(tfn)
-  File.utime(0, theirs_ts, filename)
-  rm tfn
-end
-
-def download(url, filename)
-  curl %w{--remote-time --output} + [filename, url.to_s]
-end
-
-def timestamp(url, filename)
-  curl %w{--remote-time --range 0-0 --output} + [filename, url.to_s]
-end
-
-def mtime(filename)
-  File.new(filename).mtime
 end
 
 require "fileutils"
@@ -168,10 +193,15 @@ end
 
 url = url_for filename
 # -> factory method in Blobec
-klass = Blobec.const_get(url.sub(/:.*/, "").capitalize)
-transfer = klass.new(filename, url)
+transport = Blobec::Transport.const_get(url.sub(/:.*/, "").capitalize)
 
 case command
+# low level transport commands
+when "get":
+    transport.get(filename, url)
+when "put":
+    transport.put(filename, url)
+
 when "up", "update":
     update(filename)
 when "ci", "checkin":
@@ -184,5 +214,7 @@ when "push":
 when "fetch":
     fetch filename
 when "create":
-    transfer.create
+    transport.create
+else
+    $stderr.puts "Unknown command '#{command}'"
 end
