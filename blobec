@@ -40,13 +40,6 @@ module Blobec
       url + ".locked"
     end
 
-    def update
-      lock
-      get
-      yield
-      put
-      unlock
-    end
   end
 
   module Transport
@@ -54,7 +47,7 @@ module Blobec
       extend self
 
       # url -> filename
-      def get(filename, url)
+      def get(url, filename)
         curl %w{--remote-time --output} + [filename, url.to_s]
       end
 
@@ -63,13 +56,32 @@ module Blobec
         curl ["--upload-file", filename, url.to_s]
       end
 
-      module_function :get, :put
+      def lock(url)
+        locked_url = url + ".locked"
+        dir, slash, base = url.rpartition "/"
+        mv(dir + "/", base, base + ".locked") && locked_url || nil
+      end
+
+      def unlock(url)
+        dir, slash, base = url.rpartition "/"
+        mv(dir + "/", base + ".locked", base)
+      end
 
       private
 
+#      CURL_FLAGS = %w{--verbose --netrc-optional --ftp-ssl --insecure}
+      CURL_FLAGS = %w{--netrc-optional --ftp-ssl --insecure}
+
       def curl(array)
         # insecure sucks. should --cacert help?
-        sys %w{curl --verbose --netrc-optional --ftp-ssl --insecure} + array
+        sys %w{curl} + CURL_FLAGS + array
+      end
+
+      def mv(path, from, to)
+        args = ["curl", CURL_FLAGS, "-f", "-Q", "+RNFR #{from}", "-Q", "+RNTO #{to}", "--range", "0-0", "-o", "/dev/null", path + to].flatten
+        pp args
+        system(*args)
+        $?.success?
       end
 
       # these are obsolete?
@@ -95,7 +107,7 @@ module Blobec
       extend self
 
       # url -> filename
-      def get(filename, url)
+      def get(url, filename)
         FileUtils.cp remote_filename(url), filename
       end
 
@@ -123,22 +135,22 @@ module Blobec
 
     def wrap(git_dir, pack_filename)
       local = "file://" + File.expand_path(git_dir)
-      mktemp("-d #{git_dir}.XXXXXX.bare.git") do |git|
+      mktemp("-d #{git_dir}.bare.git.XXXXXX") do |git|
         sys %w{git clone --bare} + [local, git]
-        mktemp(git_dir + ".XXXXXX.tar") do |tar|
+        mktemp(git_dir + ".tar.XXXXXX") do |tar|
           sys %w{tar cvf} + [tar, "-C", git, "."]
           sys %w{gpg --encrypt --default-recipient-self --output} + [pack_filename, tar]
         end
       end
     end  
 
-    def unwrap(pack_filename)
+    # empty git_dir needs to exist already
+    def unwrap(pack_filename, git_dir)
       git = nil
-      mktemp(pack_filename + ".XXXXXX.tar") do |tar|
-        # interactive
-        sys %w{gpg --decrypt --output} + [tar, pack_filename]
-        git = mktemp("-d #{git_dir}.XXXXXX.bare.git")
-        sys %w{tar -f} + [tar, "-C", git, "-xv"]
+      mktemp(pack_filename + ".tar.XXXXXX") do |tar|
+        # interactive (yes=overwrite existing file)
+        sys %w{gpg --decrypt --yes --output} + [tar, pack_filename]
+        sys %w{tar -f} + [tar, "-C", git_dir, "-xv"]
       end
       git
     end
@@ -208,25 +220,62 @@ def update(filename)
 end
 
 def mktemp(template)
-  t = `mktemp #{template}`
+  t = `mktemp #{template}`.chomp
   fail unless $?.success?
   if block_given?
-    yield t
-    rm_r t
+    begin
+      yield t
+    ensure
+      rm_r t
+    end
   else
     t
   end
 end
 
-def push(filename)
-  pack filename
-  gtg = filename + ".gtg"
-  upload_ts url_for(gtg), gtg
+def git_push(source_git, target_git)
+  puts "DRY RUN"
+  push = "git push --dry-run --verbose --porcelain"
+  system "cd #{source_git}; #{push} #{target_git} || #{push} #{target_git}/*.git"
+  $?.success?
 end
 
-def fetch(filename)
-  update(filename + ".gtg")
-  unpack filename
+def wrapped_git_push(git_local, gtg_target)
+  status = nil
+  mktemp("-d #{gtg_target}.bare.git.XXXXXX") do |git_target|
+    Blobec::Wrap.unwrap(gtg_target, git_target)
+    status = git_push(git_local, git_target)
+    if status
+      Blobec::Wrap.wrap(git_target, gtg_target)
+    end
+  end
+  status
+end
+
+def push(git_dir, url, transport)
+  locked_url = transport.lock(url)
+  unless locked_url.nil?
+    begin
+      mktemp locked_url[%r{.*/(.*)},1] + ".proxy.XXXXXX" do |proxy|
+        transport.get(locked_url, proxy)
+        if wrapped_git_push(git_dir, proxy)
+          transport.put(proxy, locked_url)
+        end
+      end
+    ensure
+      transport.unlock(url)
+    end
+  end
+end
+
+def fetch(url, filename, transport)
+  transport.get(url, temp_filename)
+  copy_git = Blobec::Wrap.unwrap(gtg_target)
+  begin
+    system "cd #{source_git}; git push --dry-run --verbose --porcelain #{target_git}"
+  ensure
+    # rm_rf copy_git
+  end
 end
 
 url = url_for filename
@@ -236,10 +285,14 @@ transport = Blobec::Transport.const_get(url.sub(/:.*/, "").capitalize)
 case command
 # low level transport commands
 when "get":
-    transport.get(filename, url)
+    transport.get(url, filename)
 when "put":
     transport.put(filename, url)
-
+when "lock"
+  locked_url = transport.lock(url)
+  puts locked_url || "FAILED"
+when "unlock"
+  transport.unlock(url)
 when "up", "update":
     update(filename)
 when "ci", "checkin":
@@ -248,9 +301,9 @@ when "st", "status":
 when "upload":
     upload(url, filename)
 when "push":
-    push filename
+    push(filename, url, transport)
 when "fetch":
-    fetch filename
+    fetch url, filename
 when "create":
     transport.create
 else
