@@ -273,12 +273,15 @@ def push(git_dir, url, transport)
 end
 
 def fetch(url, filename, transport)
-  transport.get(url, temp_filename)
-  copy_git = Blobec::Wrap.unwrap(gtg_target)
-  begin
-    system "cd #{source_git}; git push --dry-run --verbose --porcelain #{target_git}"
-  ensure
-    # rm_rf copy_git
+  mktemp url[%r{.*/(.*)},1] + ".proxy.XXXXXX" do |proxy|
+    transport.get(url, proxy)
+    mktemp("-d #{proxy}.bare.git.XXXXXX") do |proxy_git|
+      Blobec::Wrap.unwrap(proxy, proxy_git)
+      sh "cd #{filename} && " +
+        "git remote rm #{$remote} && " +
+        "git remote add #{$remote} #{proxy_git} && " +
+        "git fetch #{$remote}"
+    end
   end
 end
 
@@ -307,7 +310,7 @@ when "upload":
 when "push":
     push(filename, url, transport)
 when "fetch":
-    fetch url, filename
+    fetch url, filename, transport
 when "create":
     transport.create
 else
