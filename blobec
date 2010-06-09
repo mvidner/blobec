@@ -27,6 +27,11 @@ def sys(array)
   sh *array
 end
 
+def echo_system(*args)
+  puts *args
+  system *args
+end
+
 module Blobec
   class XTransport
     attr_accessor :filename, :url
@@ -79,8 +84,7 @@ module Blobec
 
       def mv(path, from, to)
         args = ["curl", CURL_FLAGS, "-f", "-Q", "+RNFR #{from}", "-Q", "+RNTO #{to}", "--range", "0-0", "-o", "/dev/null", path + to].flatten
-        pp args
-        system(*args)
+        echo_system(*args)
         $?.success?
       end
 
@@ -135,13 +139,14 @@ module Blobec
 
     def wrap(git_dir, pack_filename)
       local = "file://" + File.expand_path(git_dir)
-      mktemp("-d #{git_dir}.bare.git.XXXXXX") do |git|
-        sys %w{git clone --bare} + [local, git]
+      git = git_dir
+#      mktemp("-d #{git_dir}.bare.git.XXXXXX") do |git|
+#        sys %w{git clone --bare} + [local, git]
         mktemp(git_dir + ".tar.XXXXXX") do |tar|
           sys %w{tar cvf} + [tar, "-C", git, "."]
-          sys %w{gpg --encrypt --default-recipient-self --output} + [pack_filename, tar]
+          sys %w{gpg --encrypt --yes --default-recipient-self --output} + [pack_filename, tar]
         end
-      end
+#      end
     end  
 
     # empty git_dir needs to exist already
@@ -234,9 +239,8 @@ def mktemp(template)
 end
 
 def git_push(source_git, target_git)
-  puts "DRY RUN"
-  push = "git push --dry-run --verbose --porcelain"
-  system "cd #{source_git}; #{push} #{target_git} || #{push} #{target_git}/*.git"
+  push = "git push --verbose --porcelain"
+  echo_system "cd #{source_git}; #{push} #{target_git}"
   $?.success?
 end
 
