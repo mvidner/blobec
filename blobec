@@ -18,6 +18,9 @@ def url_for(filename)
   File.new(filename + ".blburl." + $remote).readline.chomp
 end
 
+def local_url(filename)
+  "file://" + File.expand_path(filename)
+end
 
 #url_s = ARGV[0]
 #url = URI.parse url_s
@@ -138,7 +141,7 @@ module Blobec
     extend self
 
     def wrap(git_dir, pack_filename)
-      local = "file://" + File.expand_path(git_dir)
+      local = local_url(git_dir)
       git = git_dir
 #      mktemp("-d #{git_dir}.bare.git.XXXXXX") do |git|
 #        sys %w{git clone --bare} + [local, git]
@@ -279,7 +282,7 @@ def fetch(url, filename, transport)
       Blobec::Wrap.unwrap(proxy, proxy_git)
       sh "cd #{filename} && " +
         "git remote rm #{$remote} && " +
-        "git remote add #{$remote} #{proxy_git} && " +
+        "git remote add #{$remote} #{local_url(proxy_git)} && " +
         "git fetch #{$remote}"
     end
   end
