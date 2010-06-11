@@ -278,7 +278,7 @@ end
 
 def git_push(source_git, target_git)
   push = "git push --verbose --porcelain"
-  echo_system "cd #{source_git}; #{push} #{target_git}"
+  echo_system "cd #{source_git}; #{push} #{local_url(target_git)}"
   $?.success?
 end
 
