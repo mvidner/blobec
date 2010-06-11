@@ -45,7 +45,12 @@ else
 end
 
 def url_for(filename)
-  File.new(filename + ".blburl." + $remote).readline.chomp
+  begin
+    f = File.new(filename + ".blburl." + $remote)
+    f.readline.chomp
+  rescue Errno::ENOENT
+    `git config --get blobec.#{$remote}.url`.chomp
+  end
 end
 
 def local_url(filename)
