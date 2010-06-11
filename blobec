@@ -52,10 +52,6 @@ def local_url(filename)
   "file://" + File.expand_path(filename)
 end
 
-#url_s = ARGV[0]
-#url = URI.parse url_s
-#filename = ARGV[1] || url.path[%r{.*/(.*)},1]
-
 def sys(array)
   sh *array
 end
@@ -66,20 +62,6 @@ def echo_system(*args)
 end
 
 module Blobec
-  class XTransport
-    attr_accessor :filename, :url
-
-    def initialize(filename, url)
-      self.filename = filename
-      self.url = url
-    end
-
-    def locked_url
-      url + ".locked"
-    end
-
-  end
-
   module Transport
     module Ftp
       extend self
