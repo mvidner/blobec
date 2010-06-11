@@ -28,10 +28,21 @@ require 'optparse'
 $remote = "origin"
 $verbose = false
 
-opts = OptionParser.new
+opts = OptionParser.new "Usage: blobec [options] command [file ...]"
 opts.on("-r", "--remote NAME", String) {|n| $remote = n }
 opts.on("-v", "--verbose", "Run verbosely") {|v| $verbose = v }
+opts.on_tail("-h", "--help", "Show this message") do
+  puts opts
+  exit
+end
+
 command, filename = opts.parse(*ARGV)
+if command
+  filename ||= "MYFILE"         # FIXME
+else
+  puts opts
+  exit
+end
 
 def url_for(filename)
   File.new(filename + ".blburl." + $remote).readline.chomp
@@ -329,15 +340,16 @@ transport = Blobec::Transport.const_get(url.sub(/:.*/, "").capitalize)
 
 case command
 # low level transport commands
-when "get":
-    transport.get(url, filename)
-when "put":
-    transport.put(filename, url)
+when "get"
+  transport.get(url, filename)
+when "put"
+  transport.put(filename, url)
 when "lock"
   locked_url = transport.lock(url)
   puts locked_url || "FAILED"
 when "unlock"
   transport.unlock(url)
+
 when "up", "update":
     update(filename)
 when "ci", "checkin":
